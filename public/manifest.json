@@ -1,0 +1,16 @@
+{
+  "short_name": "AuraFit",
+  "name": "AuraFit AI - Personal Fitness Trainer",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#F8F9FA",
+  "theme_color": "#6366F1",
+  "display": "standalone",
+  "orientation": "portrait"
+}
