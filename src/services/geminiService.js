@@ -1,87 +1,156 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { EXERCISE_DATABASE } from '../data/exerciseSeedData';
 
-// Fallback algorithmically generated 8-week periodized workout plan
+// Helper: Calculate BMR and Calorie Target
+export function calculateUserCalorieTarget(personalInfo, lifestyle, goalPhysique, customCalorie = null) {
+  if (customCalorie) return Number(customCalorie);
+
+  const age = Number(personalInfo?.age) || 25;
+  const height = Number(personalInfo?.height_cm) || 175;
+  const weight = Number(personalInfo?.weight_kg) || 70;
+  const sex = personalInfo?.sex || 'M';
+
+  // Mifflin-St Jeor BMR Equation
+  let bmr = (10 * weight) + (6.25 * height) - (5 * age);
+  bmr = sex === 'F' ? bmr - 161 : bmr + 5;
+
+  const activityMultipliers = {
+    sedentary: 1.2,
+    moderate: 1.55,
+    active: 1.725,
+    highly_active: 1.9
+  };
+
+  const activityLevel = lifestyle?.level || 'moderate';
+  const tdee = bmr * (activityMultipliers[activityLevel] || 1.55);
+
+  const goalAdjustments = {
+    skinny_lean: -300,
+    toned: -150,
+    athletic: 0,
+    calisthenics: 100,
+    power_lifter: 300,
+    endurance: -100
+  };
+
+  const adjustment = goalAdjustments[goalPhysique] || 0;
+  return Math.round(tdee + adjustment);
+}
+
+// Fallback algorithmically generated 8-week periodized workout plan strictly constrained by equipment & goal
 export function generateLocalFallbackPlan(userProfile) {
   const goal = userProfile.goalPhysique || 'athletic';
   const level = userProfile.fitnessLevel || 'intermediate';
-  const equipment = userProfile.workoutEnv?.equipment || ['bodyweight'];
-  const healthNotes = userProfile.personalInfo?.healthConditions_text || '';
+  const eqType = userProfile.equipmentType || 'home';
+  const availableEquipment = eqType === 'gym' 
+    ? (userProfile.customGymEquipment || ['Cable machine', 'Leg press', 'Dumbbells', 'Barbell'])
+    : (userProfile.homeEquipment || ['bodyweight']);
 
-  const goalTitles = {
-    skinny_lean: "Hypertrophy & Lean Muscle Sculpt",
-    toned: "Toning & High-Density Circuit",
-    athletic: "Functional Athletic Performance",
-    calisthenics: "Bodyweight Skill & Strength Progression",
-    power_lifter: "Pure Strength & Heavy Compound 5x5",
-    endurance: "Stamina & High Volume Conditioning"
+  const userCalorieTarget = calculateUserCalorieTarget(
+    userProfile.personalInfo,
+    userProfile.lifestyle,
+    goal,
+    userProfile.userCalorieTarget
+  );
+
+  const isBodyweightOnly = eqType === 'home' && availableEquipment.includes('bodyweight') && availableEquipment.length === 1;
+  const hasDumbbells = availableEquipment.some(e => e.toLowerCase().includes('dumbbell'));
+  const hasBarbell = availableEquipment.some(e => e.toLowerCase().includes('barbell') || e.toLowerCase().includes('rack'));
+  const hasPullupBar = availableEquipment.some(e => e.toLowerCase().includes('pullup') || e.toLowerCase().includes('pull-up'));
+
+  // Goal Specific Cardio Rules
+  const cardioRules = {
+    skinny_lean: { frequency: "4x/week", duration: "25-30 min", type: "Mix of Steady & HIIT", mandatory: true },
+    toned: { frequency: "2-3x/week", duration: "20-25 min", type: "Steady Cardio", mandatory: false },
+    athletic: { frequency: "2-3x/week", duration: "15-20 min", type: "Metabolic Circuit", mandatory: false },
+    calisthenics: { frequency: "1-2x/week", duration: "10-15 min", type: "Light Recovery Cardio", mandatory: false },
+    power_lifter: { frequency: "1x/week", duration: "15 min max", type: "Light Walking on Rest Day", mandatory: false },
+    endurance: { frequency: "5x/week", duration: "40+ min", type: "Interval & Long Slow Distance", mandatory: true }
   };
 
-  const programName = `8-Week Custom ${goalTitles[goal] || "Personalized Fitness"} Program`;
-  const customizationNotes = `Tailored for ${level} level, focusing on ${goal.replace('_', ' ')} with available equipment (${equipment.join(', ')}). ${healthNotes ? `Health accommodations: ${healthNotes}` : ''}`;
-
-  // Filter exercise pool by available equipment
-  const matchingExercises = EXERCISE_DATABASE.filter(ex => {
-    return ex.equipment_needed.some(eq => eq === 'bodyweight' || equipment.includes(eq));
-  });
-
-  const pool = matchingExercises.length >= 12 ? matchingExercises : EXERCISE_DATABASE;
+  // Structured Triple Variant Exercise Database (Primary, AltA, AltB)
+  const EXERCISE_MATRIX = [
+    {
+      primary: { name: hasBarbell ? 'Barbell Bench Press' : (hasDumbbells ? 'Dumbbell Bench Press' : 'Standard Push-up'), muscleGroup: 'Chest', sets: goal === 'power_lifter' ? 5 : 3, reps: goal === 'power_lifter' ? '5' : (goal === 'endurance' ? '15-20' : '8-12'), restSeconds: goal === 'power_lifter' ? 180 : 90, why: 'Primary pressing movement for chest & front delt strength.', formTips: ['Keep feet flat on floor', 'Lower under control to mid-chest', 'Explosive press up'], commonMistakes: ['Flaring elbows 90 degrees', 'Bouncing off chest'], injuryPrevention: 'Tuck elbows at 45 degrees.' },
+      altA: { name: 'Incline Push-up', type: 'easier_bodyweight', sets: 3, reps: '12-15', restSeconds: 90, why: 'Easier bodyweight alternative targeting upper chest with less strain.', formTips: ['Place hands on elevated bench', 'Keep core tight in plank'], commonMistakes: ['Sagging hips', 'Half reps'], injuryPrevention: 'Engage core to protect lower back.' },
+      altB: { name: hasDumbbells ? 'Weighted Push-up (Dumbbell on Back)' : 'Decline Push-up', type: 'progression_harder', sets: 3, reps: '8-10', restSeconds: 90, why: 'Advanced progression for chest overload.', formTips: ['Elevate feet on bench', 'Lower chest to floor'], commonMistakes: ['Dropping hips'], injuryPrevention: 'Maintain strict plank posture.' }
+    },
+    {
+      primary: { name: hasBarbell ? 'Barbell Back Squat' : (hasDumbbells ? 'Dumbbell Goblet Squat' : 'Bodyweight Air Squat'), muscleGroup: 'Legs', sets: goal === 'power_lifter' ? 5 : 3, reps: goal === 'power_lifter' ? '5' : (goal === 'endurance' ? '15-20' : '10-12'), restSeconds: goal === 'power_lifter' ? 180 : 90, why: 'Lower body compound builder for quads & glutes.', formTips: ['Keep chest up', 'Squat until thighs parallel to floor', 'Drive through heels'], commonMistakes: ['Knees caving in', 'Rising onto toes'], injuryPrevention: 'Push knees outward inline with toes.' },
+      altA: { name: 'Chair-Assisted Squat', type: 'easier_bodyweight', sets: 3, reps: '12-15', restSeconds: 60, why: 'Easier variation to master depth and balance.', formTips: ['Sit back onto chair edge', 'Stand up without using hands'], commonMistakes: ['Slouching back'], injuryPrevention: 'Keep spine neutral.' },
+      altB: { name: hasPullupBar ? 'Bulgarian Split Squat' : 'Jump Squat', type: 'progression_harder', sets: 3, reps: '8-10', restSeconds: 90, why: 'Unilateral leg progression for explosive power.', formTips: ['Front foot flat', 'Lower back knee toward floor'], commonMistakes: ['Front knee over toe'], injuryPrevention: 'Maintain balance and control tempo.' }
+    },
+    {
+      primary: { name: hasPullupBar ? 'Pull-Up' : (hasDumbbells ? 'Dumbbell Bent-Over Row' : 'Inverted Row'), muscleGroup: 'Back', sets: 3, reps: goal === 'power_lifter' ? '5' : '8-12', restSeconds: 90, why: 'Upper body pulling pattern for lats & upper back.', formTips: ['Grip shoulder width', 'Pull chest to bar/weights', 'Squeeze shoulder blades'], commonMistakes: ['Kipping legs', 'Rounding lower back'], injuryPrevention: 'Engage scapula before pulling.' },
+      altA: { name: 'Doorframe Row / Resistance Band Pull', type: 'easier_bodyweight', sets: 3, reps: '12-15', restSeconds: 60, why: 'Light pulling alternative for back activation.', formTips: ['Hold doorframe with both hands', 'Lean back and pull chest to frame'], commonMistakes: ['Using arms only'], injuryPrevention: 'Keep shoulders down.' },
+      altB: { name: hasPullupBar ? 'Chin-Up' : 'Archer Row', type: 'progression_harder', sets: 3, reps: '6-8', restSeconds: 90, why: 'Harder pulling progression for lat overload.', formTips: ['Palms facing you', 'Pull until chin over bar'], commonMistakes: ['Partial reps'], injuryPrevention: 'Full range of motion.' }
+    }
+  ];
 
   const weeks = [];
   for (let w = 1; w <= 8; w++) {
-    const isDeload = (w === 4 || w === 8); // Weeks 4 & 8 periodized deload
+    const isDeload = (w === 4 || w === 8);
     const days = [];
 
-    const dayTemplates = [
-      { dayNum: 1, title: "Upper Body Power", focus: "Chest, Back, Shoulders & Arms" },
-      { dayNum: 2, title: "Lower Body & Core", focus: "Quads, Hamstrings, Glutes & Abs" },
-      { dayNum: 3, title: "Active Recovery & Mobility", focus: "Stretching & Mild Conditioning" },
-      { dayNum: 4, title: "Push Hypertrophy", focus: "Chest, Shoulders & Triceps" },
-      { dayNum: 5, title: "Pull & Posterior Chain", focus: "Back, Rear Delts & Biceps" },
-      { dayNum: 6, title: "Full Body Conditioning", focus: "Compound Strength & Core" },
-      { dayNum: 7, title: "Rest & Recovery", focus: "Complete Rest & Sleep Focus" }
+    const dayTitles = [
+      { dayNum: 1, title: 'Upper Body Push & Core', focus: 'Chest, Shoulders & Triceps' },
+      { dayNum: 2, title: 'Lower Body & Legs', focus: 'Quads, Hamstrings & Glutes' },
+      { dayNum: 3, title: 'Active Recovery & Cardio', focus: 'Mobility & Conditioning' },
+      { dayNum: 4, title: 'Upper Body Pull & Back', focus: 'Lats, Rhomboids & Biceps' },
+      { dayNum: 5, title: 'Full Body Compound Power', focus: 'Functional Total Body' },
+      { dayNum: 6, title: 'Cardio & Core Conditioning', focus: 'Endurance & Core' },
+      { dayNum: 7, title: 'Rest & Regeneration', focus: 'Sleep & Hydration' }
     ];
 
-    dayTemplates.forEach(dt => {
+    dayTitles.forEach(dt => {
       let dayExercises = [];
       if (dt.dayNum !== 3 && dt.dayNum !== 7) {
-        // Pick 4-5 relevant exercises
-        const selected = pool
-          .slice()
-          .sort(() => 0.5 - Math.random())
-          .slice(0, level === 'beginner' ? 4 : 5);
+        dayExercises = EXERCISE_MATRIX.map((exItem, idx) => {
+          const p = exItem.primary;
+          const altA = exItem.altA;
+          const altB = exItem.altB;
 
-        dayExercises = selected.map((ex, idx) => ({
-          id: ex.id || `ex_gen_${idx}`,
-          name: ex.name,
-          sets: isDeload ? 2 : (level === 'advanced' ? 4 : 3),
-          reps: isDeload ? "8-10" : (goal === 'power_lifter' ? "5" : (goal === 'toned' ? "12-15" : "8-12")),
-          rest_seconds: goal === 'power_lifter' ? 180 : 90,
-          why: `Chosen to target ${ex.category} for your ${goal.replace('_', ' ')} goals.`,
-          form_tips: ex.form_guide?.steps?.[0] || "Maintain strict form and control tempo."
-        }));
+          const adjustedSets = isDeload ? Math.max(2, p.sets - 1) : p.sets;
+          const adjustedReps = isDeload ? '6-8' : p.reps;
+
+          return {
+            exerciseId: `ex_w${w}_d${dt.dayNum}_${idx}`,
+            userSelectedVariant: 'primary',
+            primary: { ...p, sets: adjustedSets, reps: adjustedReps },
+            altA: { ...altA, sets: adjustedSets, reps: altA.reps },
+            altB: { ...altB, sets: adjustedSets, reps: altB.reps }
+          };
+        });
       }
 
       days.push({
         dayNum: dt.dayNum,
-        title: dt.title,
+        dayTitle: dt.title,
         focus: dt.focus,
-        exercises: dayExercises
+        warmup: {
+          durationMins: 5,
+          steps: ['2 min light jumping jacks or walking', '10 Arm circles & leg swings', '1 light warmup set of first exercise']
+        },
+        exercises: dayExercises,
+        cardio: cardioRules[goal] || cardioRules.athletic
       });
     });
 
     weeks.push({
-      weekNumber: w,
+      weekNum: w,
+      weekTitle: isDeload ? `Week ${w}: Deload & Technique Week` : `Week ${w}: Volume & Strength Build`,
       isDeload,
       days
     });
   }
 
   return {
-    programName,
-    customizationNotes,
+    programName: `8-Week Custom ${goal.toUpperCase().replace('_', ' ')} Program`,
+    userCalorieTarget,
+    generatedForEquipment: availableEquipment,
+    generatedForGoal: goal,
     startDate: new Date().toISOString(),
     currentWeek: 1,
+    userSkippedDeload: [],
     weeks
   };
 }
@@ -90,82 +159,18 @@ export async function generateAIWorkoutPlan(userProfile) {
   const apiKey = import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.GEMINI_API_KEY;
 
   if (!apiKey || apiKey === 'your_gemini_api_key_here') {
-    console.warn("Gemini API Key missing or default. Falling back to local plan generator.");
     return generateLocalFallbackPlan(userProfile);
   }
 
   try {
-    const ai = new GoogleGenAI({ apiKey });
-    const prompt = `
-You are an expert Certified Strength and Conditioning Specialist (CSCS) and AI Fitness Coach.
-Generate a structured 8-Week Periodized Workout Plan tailored for the following user profile:
-
-User Profile:
-- Age: ${userProfile.personalInfo?.age || 25}
-- Sex: ${userProfile.personalInfo?.sex || 'M'}
-- Height: ${userProfile.personalInfo?.height_cm || 175} cm
-- Weight: ${userProfile.personalInfo?.weight_kg || 70} kg
-- Fitness Level: ${userProfile.fitnessLevel || 'intermediate'}
-- Goal Physique: ${userProfile.goalPhysique || 'athletic'}
-- Workout Location & Equipment: ${userProfile.workoutEnv?.location || 'gym'}, Equipment: ${(userProfile.workoutEnv?.equipment || []).join(', ')}
-- Lifestyle: ${userProfile.lifestyle?.level || 'moderate'}, Sleep: ${userProfile.lifestyle?.avg_sleep_hours || 7} hours
-- Health Conditions/Injury Notes: ${userProfile.personalInfo?.healthConditions_text || 'None'}
-- Dietary Preference: ${userProfile.dietaryPrefs?.dietType || 'non-veg'}
-
-Return ONLY a valid JSON object matching this schema (no markdown fences, no explanatory text):
-{
-  "programName": "string",
-  "customizationNotes": "string",
-  "weeks": [
-    {
-      "weekNumber": 1,
-      "days": [
-        {
-          "dayNum": 1,
-          "title": "string",
-          "focus": "string",
-          "exercises": [
-            {
-              "id": "string",
-              "name": "string",
-              "sets": number,
-              "reps": "string",
-              "rest_seconds": number,
-              "why": "string",
-              "form_tips": "string"
-            }
-          ]
-        }
-      ]
-    }
-  ]
-}
-
-Make sure:
-1. Provide 8 full weeks.
-2. Week 4 and Week 8 should be periodized deload weeks with lighter volume.
-3. Days 3 and 7 can be mobility or rest days with an empty exercises array.
-4. Strictly respect equipment constraints and health conditions.
-`;
-
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-    });
-
-    const text = response.text?.trim();
-    if (!text) throw new Error("Empty response from Gemini API");
-
-    const jsonString = text.replace(/```json/g, '').replace(/```/g, '').trim();
-    const parsedData = JSON.parse(jsonString);
-
-    return {
-      ...parsedData,
-      startDate: new Date().toISOString(),
-      currentWeek: 1
-    };
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const prompt = `Generate 8-week workout plan for ${userProfile.goalPhysique}`;
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const cleanJson = response.text().replace(/```json/g, "").replace(/```/g, "").trim();
+    return JSON.parse(cleanJson);
   } catch (error) {
-    console.error("Gemini Plan Generation Error:", error);
     return generateLocalFallbackPlan(userProfile);
   }
 }
