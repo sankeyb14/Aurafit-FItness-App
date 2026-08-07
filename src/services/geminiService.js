@@ -1,4 +1,4 @@
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { EXERCISE_DATABASE } from '../data/exerciseSeedData';
 
 // Fallback algorithmically generated 8-week periodized workout plan
