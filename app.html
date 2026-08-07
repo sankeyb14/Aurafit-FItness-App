@@ -96,6 +96,46 @@
       return Math.round(tdee + (goalOffsets[goalPhysique] || 0));
     }
 
+    function normalizeExerciseVariant(variant, fallbackName = 'Exercise') {
+      if (!variant) return null;
+      if (typeof variant === 'string') {
+        return {
+          name: variant, sets: 3, reps: '10', restSeconds: 90, muscleGroup: 'Full Body',
+          why: 'Target exercise for strength development.',
+          formTips: ['Maintain good posture', 'Control tempo', 'Breathe out on exertion'],
+          commonMistakes: ['Rushing reps', 'Improper joint alignment'],
+          injuryPrevention: 'Brace core and move with control.'
+        };
+      }
+      return {
+        name: variant.name || variant.exerciseName || variant.title || variant.exercise || fallbackName,
+        sets: variant.sets || variant.set_count || 3,
+        reps: String(variant.reps || variant.rep_count || '10'),
+        restSeconds: variant.restSeconds || variant.rest_seconds || 90,
+        muscleGroup: variant.muscleGroup || variant.target_muscle || 'Full Body',
+        why: variant.why || variant.description || 'Target exercise for strength development.',
+        formTips: Array.isArray(variant.formTips) && variant.formTips.length > 0 ? variant.formTips : ['Maintain controlled tempo', 'Breathe out on exertion'],
+        commonMistakes: Array.isArray(variant.commonMistakes) && variant.commonMistakes.length > 0 ? variant.commonMistakes : ['Rushing through reps', 'Improper joint alignment'],
+        injuryPrevention: variant.injuryPrevention || 'Control the eccentric phase and stop before sharp joint pain.'
+      };
+    }
+
+    function normalizeExerciseItem(item) {
+      if (!item) return null;
+      const selectedKey = item.userSelectedVariant || 'primary';
+      const primaryRaw = item.primary || (item.name ? item : null) || item;
+      const altARaw = item.altA || item.alternativeA || item.easierVariant;
+      const altBRaw = item.altB || item.alternativeB || item.harderVariant;
+
+      const primary = normalizeExerciseVariant(primaryRaw, 'Target Exercise');
+      const altA = normalizeExerciseVariant(altARaw, 'Incline Push-up (Easier Variant)');
+      const altB = normalizeExerciseVariant(altBRaw, 'Weighted Progression (Harder Variant)');
+
+      const currentVariant = selectedKey === 'altA' ? altA : (selectedKey === 'altB' ? altB : primary);
+
+      return { exerciseId: item.exerciseId || item.id || `ex_${Date.now()}`, userSelectedVariant: selectedKey, primary, altA, altB, currentVariant };
+    }
+
     const EXERCISE_MATRIX = [
       {
         primary: { name: 'Dumbbell Bench Press', muscleGroup: 'Chest', sets: 3, reps: '10', restSeconds: 90, why: 'Primary compound pressing movement for chest & front delts.', formTips: ['Lie flat on bench with feet planted.', 'Lower dumbbells under control.', 'Press up without locking out elbows.'], commonMistakes: ['Flaring elbows 90 degrees', 'Bouncing at bottom'], injuryPrevention: 'Tuck elbows at 45 degree angle.' },
@@ -162,8 +202,8 @@
       const [activeTab, setActiveTab] = useState('home');
       const [onboardingStep, setOnboardingStep] = useState(1);
       const [selectedExerciseItem, setSelectedExerciseItem] = useState(null);
+      const [modalTab, setModalTab] = useState('form'); // 'form', 'alternatives', 'progressions'
       const [isMealModalOpen, setIsMealModalOpen] = useState(false);
-      const [adaptationModal, setAdaptationModal] = useState(null);
       const [toastMsg, setToastMsg] = useState('');
       const [selectedDayIndex, setSelectedDayIndex] = useState(2);
 
@@ -468,15 +508,17 @@
               <div className="space-y-3">
                 <h3 className="text-base font-extrabold text-textDark">Prescribed Exercises</h3>
                 {currentWorkoutDay.exercises.map((exItem, idx) => {
-                  const variantKey = exItem.userSelectedVariant || 'primary';
-                  const variant = exItem[variantKey] || exItem.primary;
+                  const norm = normalizeExerciseItem(exItem);
+                  if (!norm || !norm.currentVariant) return null;
+                  const variant = norm.currentVariant;
+                  const variantKey = norm.userSelectedVariant || 'primary';
 
                   return (
                     <div key={idx} className="bg-white p-5 rounded-3xl shadow-soft border border-gray-100 flex justify-between items-center">
                       <div>
                         <span className="text-[9px] font-black uppercase text-brandPurple bg-purple-50 px-2.5 py-0.5 rounded-full">{variantKey.toUpperCase()} VARIANT</span>
                         <h4 className="text-xs font-extrabold text-textDark mt-1">{variant.name}</h4>
-                        <p className="text-[10px] text-textMuted font-bold">{variant.sets} Sets × {variant.reps} Reps</p>
+                        <p className="text-[10px] text-textMuted font-bold">{variant.sets} Sets × {variant.reps} Reps • {variant.restSeconds}s rest</p>
                       </div>
                       <button onClick={() => setSelectedExerciseItem(exItem)} className="text-xs font-extrabold text-brandPurple bg-purple-50 px-3 py-1.5 rounded-xl">
                         Form & Alts →
@@ -583,26 +625,91 @@
             </div>
           )}
 
-          {/* 3-TAB EXERCISE DETAIL MODAL */}
-          {selectedExerciseItem && (
-            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-              <div className="bg-white p-6 rounded-3xl max-w-sm w-full space-y-4">
-                <div className="flex justify-between items-start">
-                  <h2 className="text-xl font-black text-textDark">Exercise Intelligence</h2>
-                  <button onClick={() => setSelectedExerciseItem(null)} className="text-gray-400 font-black">✕</button>
-                </div>
-                <div className="text-xs font-semibold text-gray-600 space-y-2">
-                  <p><strong>Primary:</strong> {selectedExerciseItem.primary?.name}</p>
-                  <p><strong>Alt A (Easier):</strong> {selectedExerciseItem.altA?.name}</p>
-                  <p><strong>Alt B (Harder):</strong> {selectedExerciseItem.altB?.name}</p>
-                </div>
-                <div className="flex gap-2">
-                  <button onClick={() => { selectedExerciseItem.userSelectedVariant = 'altA'; triggerToast('Switched to Alt A (Easier variant)'); setSelectedExerciseItem(null); }} className="flex-1 py-2 bg-emerald-500 text-white font-bold rounded-xl text-xs">Switch to Alt A</button>
-                  <button onClick={() => { selectedExerciseItem.userSelectedVariant = 'altB'; triggerToast('Switched to Alt B (Progression variant)'); setSelectedExerciseItem(null); }} className="flex-1 py-2 bg-brandPurple text-white font-bold rounded-xl text-xs">Switch to Alt B</button>
+          {/* 3-TAB EXERCISE DETAIL MODAL WITH DEFENSIVE RENDERING */}
+          {selectedExerciseItem && (() => {
+            const norm = normalizeExerciseItem(selectedExerciseItem);
+            if (!norm || !norm.currentVariant) return null;
+            const { currentVariant, primary, altA, altB } = norm;
+
+            return (
+              <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                <div className="bg-white p-6 rounded-3xl max-w-sm w-full space-y-4 max-h-[90vh] overflow-y-auto shadow-2xl">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <span className="text-[9px] font-black uppercase text-brandPurple bg-purple-50 px-2.5 py-0.5 rounded-full">
+                        {currentVariant.muscleGroup} • {currentVariant.sets} Sets × {currentVariant.reps} Reps
+                      </span>
+                      <h2 className="text-xl font-black text-textDark mt-1">{currentVariant.name}</h2>
+                    </div>
+                    <button onClick={() => setSelectedExerciseItem(null)} className="text-gray-400 font-black text-lg">✕</button>
+                  </div>
+
+                  {/* 3 Tabs */}
+                  <div className="flex bg-gray-100 p-1 rounded-2xl text-xs font-extrabold text-gray-500">
+                    <button onClick={() => setModalTab('form')} className={`flex-1 py-1.5 rounded-xl ${modalTab === 'form' ? 'bg-white text-brandPurple shadow-sm' : ''}`}>Form Guide</button>
+                    <button onClick={() => setModalTab('alternatives')} className={`flex-1 py-1.5 rounded-xl ${modalTab === 'alternatives' ? 'bg-white text-brandPurple shadow-sm' : ''}`}>Alternatives</button>
+                    <button onClick={() => setModalTab('progressions')} className={`flex-1 py-1.5 rounded-xl ${modalTab === 'progressions' ? 'bg-white text-brandPurple shadow-sm' : ''}`}>Progressions</button>
+                  </div>
+
+                  {modalTab === 'form' && (
+                    <div className="space-y-3 text-xs">
+                      <div className="p-3 bg-purple-50 rounded-2xl text-brandPurple font-medium">
+                        <span className="font-extrabold block mb-0.5">Purpose:</span>
+                        {currentVariant.why}
+                      </div>
+                      <div>
+                        <h4 className="font-extrabold text-textDark mb-1">Execution Steps:</h4>
+                        <ol className="list-decimal pl-4 space-y-1 text-gray-600 font-medium">
+                          {currentVariant.formTips.map((tip, i) => <li key={i}>{tip}</li>)}
+                        </ol>
+                      </div>
+                      <div>
+                        <h4 className="font-extrabold text-textDark mb-1">Common Mistakes:</h4>
+                        <ul className="list-disc pl-4 space-y-1 text-gray-600 font-medium">
+                          {currentVariant.commonMistakes.map((m, i) => <li key={i}>{m}</li>)}
+                        </ul>
+                      </div>
+                    </div>
+                  )}
+
+                  {modalTab === 'alternatives' && (
+                    <div className="space-y-3 text-xs">
+                      {altA && (
+                        <div className="p-3 bg-gray-50 border rounded-2xl space-y-1">
+                          <div className="flex justify-between font-extrabold">
+                            <span>{altA.name}</span>
+                            <span className="text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full text-[10px]">Easier</span>
+                          </div>
+                          <p className="text-gray-500 text-[11px]">{altA.why}</p>
+                          <button onClick={() => { selectedExerciseItem.userSelectedVariant = 'altA'; triggerToast('Switched to Alt A (Easier variant)'); setSelectedExerciseItem(null); }} className="w-full mt-1 py-1.5 bg-emerald-600 text-white font-bold rounded-xl text-[11px]">Use Alt A Today</button>
+                        </div>
+                      )}
+                      {altB && (
+                        <div className="p-3 bg-gray-50 border rounded-2xl space-y-1">
+                          <div className="flex justify-between font-extrabold">
+                            <span>{altB.name}</span>
+                            <span className="text-brandPurple bg-purple-50 px-2 py-0.5 rounded-full text-[10px]">Progression</span>
+                          </div>
+                          <p className="text-gray-500 text-[11px]">{altB.why}</p>
+                          <button onClick={() => { selectedExerciseItem.userSelectedVariant = 'altB'; triggerToast('Switched to Alt B (Harder variant)'); setSelectedExerciseItem(null); }} className="w-full mt-1 py-1.5 bg-brandPurple text-white font-bold rounded-xl text-[11px]">Use Alt B Today</button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {modalTab === 'progressions' && (
+                    <div className="space-y-2 text-xs font-bold">
+                      {altA && <div className="p-2.5 bg-emerald-50 text-emerald-700 rounded-xl flex justify-between"><span>Easier: {altA.name}</span><span>{altA.sets}x{altA.reps}</span></div>}
+                      <div className="p-2.5 bg-purple-50 text-brandPurple border-2 border-brandPurple rounded-xl flex justify-between"><span>Current: {currentVariant.name}</span><span>{currentVariant.sets}x{currentVariant.reps}</span></div>
+                      {altB && <div className="p-2.5 bg-orange-50 text-brandOrange rounded-xl flex justify-between"><span>Harder: {altB.name}</span><span>{altB.sets}x{altB.reps}</span></div>}
+                    </div>
+                  )}
+
+                  <button onClick={() => setSelectedExerciseItem(null)} className="w-full py-3 bg-textDark text-white font-black rounded-2xl text-xs">Close</button>
                 </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* MEAL MODAL */}
           {isMealModalOpen && (
